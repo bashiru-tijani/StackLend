@@ -203,3 +203,97 @@
     (ok true)
   )
 )
+
+;; Debt Repayment & Position Management
+(define-public (settle-debt
+    (token-contract <bitcoin-token-standard>)
+    (repayment-amount uint)
+  )
+  (let (
+      (borrower tx-sender)
+      (current-loan (default-to {
+        outstanding-debt: u0,
+        locked-collateral: u0,
+      }
+        (map-get? lending-positions { account: borrower })
+      ))
+      (outstanding-balance (get outstanding-debt current-loan))
+    )
+    ;; Repayment Validation
+    (asserts! (>= outstanding-balance repayment-amount) ERR-INVALID-PARAMETERS)
+    (asserts! (verify-token-authorization token-contract) ERR-UNAUTHORIZED-ACCESS)
+
+    ;; Process Repayment Transaction
+    (match (contract-call? token-contract transfer repayment-amount borrower
+      (as-contract tx-sender) none
+    )
+      repayment-success (begin
+        ;; Update Loan Position
+        (map-set lending-positions { account: borrower } {
+          outstanding-debt: (- outstanding-balance repayment-amount),
+          locked-collateral: (get locked-collateral current-loan),
+        })
+        ;; Update Protocol Totals
+        (var-set aggregate-loans (- (var-get aggregate-loans) repayment-amount))
+        (ok true)
+      )
+      repayment-error (err u101)
+    )
+  )
+)
+
+;;                            LIQUIDATION ENGINE & MEV PROTECTION
+
+;; Automated Position Liquidation System
+(define-public (execute-liquidation
+    (token-contract <bitcoin-token-standard>)
+    (target-borrower principal)
+    (liquidation-amount uint)
+  )
+  (let (
+      (liquidator tx-sender)
+      (borrower-position (default-to {
+        outstanding-debt: u0,
+        locked-collateral: u0,
+      }
+        (map-get? lending-positions { account: target-borrower })
+      ))
+      (debt-balance (get outstanding-debt borrower-position))
+      (collateral-balance (get locked-collateral borrower-position))
+    )
+    ;; Liquidation Eligibility Verification
+    (asserts! (verify-token-authorization token-contract) ERR-UNAUTHORIZED-ACCESS)
+    (asserts!
+      (position-eligible-for-liquidation target-borrower debt-balance
+        collateral-balance
+      )
+      ERR-LIQUIDATION-CONDITIONS-NOT-MET
+    )
+    (asserts! (<= liquidation-amount debt-balance) ERR-INVALID-PARAMETERS)
+
+    ;; Execute Liquidation Payment
+    (match (contract-call? token-contract transfer liquidation-amount liquidator
+      (as-contract tx-sender) none
+    )
+      liquidation-success (begin
+        (let (
+            (liquidator-bonus (compute-liquidation-incentive liquidation-amount collateral-balance))
+            (existing-rewards (default-to { accumulated-rewards: u0 }
+              (map-get? liquidator-earnings { liquidator-address: liquidator })
+            ))
+          )
+          ;; Credit Liquidator Rewards
+          (map-set liquidator-earnings { liquidator-address: liquidator } { accumulated-rewards: (+ (get accumulated-rewards existing-rewards) liquidator-bonus) })
+
+          ;; Update Borrower Position Post-Liquidation
+          (map-set lending-positions { account: target-borrower } {
+            outstanding-debt: (- debt-balance liquidation-amount),
+            locked-collateral: (- collateral-balance liquidator-bonus),
+          })
+          (ok true)
+        )
+      )
+      liquidation-error (err u101)
+    )
+  )
+)
