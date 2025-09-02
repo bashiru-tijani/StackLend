@@ -297,3 +297,88 @@
     )
   )
 )
+
+;; Liquidator Reward Claim Mechanism
+(define-public (claim-liquidation-rewards (token-contract <bitcoin-token-standard>))
+  (let (
+      (liquidator tx-sender)
+      (reward-record (default-to { accumulated-rewards: u0 }
+        (map-get? liquidator-earnings { liquidator-address: liquidator })
+      ))
+      (claimable-amount (get accumulated-rewards reward-record))
+    )
+    ;; Reward Claim Validation
+    (asserts! (> claimable-amount u0) ERR-INSUFFICIENT-FUNDS)
+
+    ;; Reset Liquidator Balance
+    (map-set liquidator-earnings { liquidator-address: liquidator } { accumulated-rewards: u0 })
+    (ok true)
+  )
+)
+
+;;                              RISK ANALYTICS & CALCULATIONS
+
+;; Liquidation Eligibility Assessment
+(define-private (position-eligible-for-liquidation
+    (borrower principal)
+    (debt-amount uint)
+    (collateral-amount uint)
+  )
+  (let ((health-ratio (compute-position-health-ratio debt-amount collateral-amount)))
+    (<= health-ratio (var-get liquidation-trigger-threshold))
+  )
+)
+
+;; Position Health Ratio Computation
+(define-private (compute-position-health-ratio
+    (debt-amount uint)
+    (collateral-amount uint)
+  )
+  (if (is-eq debt-amount u0)
+    u0
+    (* (/ (* collateral-amount u10000) debt-amount) u100)
+  )
+)
+
+;; Collateral Adequacy Verification
+(define-private (validate-collateral-adequacy
+    (collateral-value uint)
+    (loan-value uint)
+  )
+  (>= (* collateral-value MINIMUM-COLLATERAL-RATIO) (* loan-value u100))
+)
+
+;; Liquidation Incentive Calculation Engine
+(define-private (compute-liquidation-incentive
+    (liquidated-amount uint)
+    (available-collateral uint)
+  )
+  (let (
+      (standard-bonus (* liquidated-amount u105)) ;; 5% liquidation premium
+      (collateral-limit (* available-collateral u50)) ;; Max 50% of collateral
+    )
+    (if (> standard-bonus collateral-limit)
+      collateral-limit
+      standard-bonus
+    )
+  )
+)
+
+;;                            PROTOCOL DATA ACCESS LAYER
+
+;; User Collateral Position Query
+(define-read-only (get-collateral-position (account principal))
+  (default-to { deposited-amount: u0 }
+    (map-get? collateral-positions { account: account })
+  )
+)
+
+;; User Lending Position Query
+(define-read-only (get-lending-position (account principal))
+  (default-to {
+    outstanding-debt: u0,
+    locked-collateral: u0,
+  }
+    (map-get? lending-positions { account: account })
+  )
+)
