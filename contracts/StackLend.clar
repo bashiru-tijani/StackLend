@@ -382,3 +382,66 @@
     (map-get? lending-positions { account: account })
   )
 )
+
+;; Protocol Health & Analytics Dashboard
+(define-read-only (get-protocol-analytics)
+  {
+    total-value-locked: (var-get aggregate-deposits),
+    total-outstanding-loans: (var-get aggregate-loans),
+    current-lending-rate: (var-get current-interest-rate),
+    utilization-ratio: (if (> (var-get aggregate-deposits) u0)
+      (/ (* (var-get aggregate-loans) u10000) (var-get aggregate-deposits))
+      u0
+    ),
+    liquidation-threshold: (var-get liquidation-trigger-threshold),
+  }
+)
+
+;;                             PROTOCOL GOVERNANCE & ADMINISTRATION
+
+;; Dynamic Interest Rate Management
+(define-public (adjust-interest-rate (new-rate uint))
+  (begin
+    (asserts! (validate-admin-privileges) ERR-UNAUTHORIZED-ACCESS)
+    (asserts!
+      (and (>= new-rate MINIMUM-ANNUAL-RATE) (<= new-rate MAXIMUM-ANNUAL-RATE))
+      ERR-INVALID-PARAMETERS
+    )
+    (var-set current-interest-rate new-rate)
+    (ok true)
+  )
+)
+
+;; Risk Parameter Optimization
+(define-public (update-liquidation-threshold (new-threshold uint))
+  (begin
+    (asserts! (validate-admin-privileges) ERR-UNAUTHORIZED-ACCESS)
+    (asserts!
+      (and
+        (>= new-threshold LIQUIDATION-FLOOR)
+        (<= new-threshold LIQUIDATION-CEILING)
+      )
+      ERR-INVALID-PARAMETERS
+    )
+    (var-set liquidation-trigger-threshold new-threshold)
+    (ok true)
+  )
+)
+
+;; Emergency Protocol Circuit Breaker
+(define-public (activate-emergency-pause)
+  (begin
+    (asserts! (validate-admin-privileges) ERR-UNAUTHORIZED-ACCESS)
+    (var-set emergency-pause-active true)
+    (ok true)
+  )
+)
+
+;; Protocol Operations Resume
+(define-public (deactivate-emergency-pause)
+  (begin
+    (asserts! (validate-admin-privileges) ERR-UNAUTHORIZED-ACCESS)
+    (var-set emergency-pause-active false)
+    (ok true)
+  )
+)
